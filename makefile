@@ -45,6 +45,8 @@ load: $(KERNEL_OBJ) $(USER_BIN)
 
 	@echo "Adding default allowed IPs and egress ports..."
 	sudo ./$(USER_BIN) -a 192.168.2.217 -p 80 add-ip
+	sudo ./$(USER_BIN) -p 80 -d 3 add-port
+	sudo ./$(USER_BIN) -p 443 -d 3 add-port
 	@echo "Default IPs and Egress Ports added"
 
 unload:
@@ -63,7 +65,7 @@ remove_maps:
 	fi
 	@echo "Removing Pinned Maps"
 	-rm -f /sys/fs/bpf/allowed_ips
-	-rm -f /sys/fs/bpf/disabled_egress
+	-rm -f /sys/fs/bpf/allowed_ports
 	@echo "Maps removed successfully"
 
 show-filters:
@@ -71,7 +73,7 @@ show-filters:
 	@tc filter show dev $(INTERFACE) ingress 2>/dev/null || echo "No filters found"
 
 
-install: load
+install: all load
 	@echo "Firewall installation complete!"
 	@echo "Use './$(USER_BIN) status' to check firewall status"
 

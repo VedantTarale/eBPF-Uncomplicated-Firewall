@@ -26,7 +26,7 @@ struct {
     __uint(max_entries, MAX_ALLOWED_IP_PORT_PAIRS);
     __type(key, struct ip_port_key);
     __type(value, __u32);
-    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } allowed_ips SEC(".maps");
 
 struct {
@@ -34,8 +34,8 @@ struct {
     __uint(max_entries, MAX_EGRESS_PORTS);
     __type(key, __u16);
     __type(value, __u32);
-    // __uint(pinning, LIBBPF_PIN_BY_NAME);
-} disabled_egress SEC(".maps");
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} allowed_ports SEC(".maps");
 
 static inline int parse_ipv4(void *data, void *data_end, struct iphdr **ip_hdr) {
     struct ethhdr *eth = data;
@@ -63,9 +63,10 @@ static inline int is_ip_port_allowed(__u32 ip, __u16 port) {
     return allowed ? 1 : 0;
 }
 
-static inline int is_egress_allowed(__u16 port) {
-    __u8 *allowed = bpf_map_lookup_elem(&disabled_egress, &port);
-    return allowed ? 0 : 1;
+static inline int is_port_allowed(__u16 port, __u8 operation) {
+    __u8 *allowed = bpf_map_lookup_elem(&allowed_ports, &port);
+    bpf_printk("%d", allowed);
+    return allowed ? *allowed == INGRESS_AND_EGRESS ? 1 : *allowed == operation : 0;
 }
 
 SEC("classifier/ingress")
@@ -86,8 +87,7 @@ int tc_ingress_firewall(struct __sk_buff *skb) {
         
         if ((void *)(tcp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-            
-        if (!is_ip_port_allowed(src_ip, tcp_hdr->dest)) {
+        if(!is_port_allowed(tcp_hdr->dest, INGRESS) && !is_ip_port_allowed(src_ip, tcp_hdr->dest)) {
             return TC_ACT_SHOT;
         }
     } else if (ip_hdr->protocol == IPPROTO_UDP) {
@@ -95,8 +95,8 @@ int tc_ingress_firewall(struct __sk_buff *skb) {
         
         if ((void *)(udp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-        
-        if (!is_ip_port_allowed(src_ip, udp_hdr->dest)) {
+
+        if (!is_port_allowed(udp_hdr->dest, INGRESS) && !is_ip_port_allowed(src_ip, udp_hdr->dest)) {
             return TC_ACT_SHOT;
         }
     } else {
@@ -119,11 +119,11 @@ int tc_egress_firewall(struct __sk_buff *skb) {
     // Handle TCP or UDP
     if (ip_hdr->protocol == IPPROTO_TCP) {
         struct tcphdr *tcp_hdr = (struct tcphdr *)((void *)ip_hdr + (ip_hdr->ihl * 4));
-        
+
         if ((void *)(tcp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-            
-        if (!is_egress_allowed(tcp_hdr->source)) {
+
+        if (!is_port_allowed(tcp_hdr->source, EGRESS)) {
             return TC_ACT_SHOT;
         }
     } else if (ip_hdr->protocol == IPPROTO_UDP) {
@@ -131,8 +131,8 @@ int tc_egress_firewall(struct __sk_buff *skb) {
         
         if ((void *)(udp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-        
-        if (!is_egress_allowed(udp_hdr->source)) {
+
+        if (!is_port_allowed(udp_hdr->source, EGRESS)) {
             return TC_ACT_SHOT;
         }
     } else {

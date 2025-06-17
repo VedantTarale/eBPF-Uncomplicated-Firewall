@@ -152,9 +152,8 @@ int add_ip(struct config *cfg, const char *ip_str, int port) {
     return 0;
 }
 
-int add_port(struct config *cfg, int port){
+int add_port(struct config *cfg, int port, int port_traffic_direction){
     int map_fd;
-    uint32_t value = 1;
     int err;
 
     if (cfg->verbose) {
@@ -164,21 +163,21 @@ int add_port(struct config *cfg, int port){
     int network_port = htons(port);
 
     // Find the map
-    map_fd = find_map_fd("disabled_egress");
+    map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
-        fprintf(stderr, "Could not find disabled_egress map. Is the program loaded and attached?\n");
+        fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
         fprintf(stderr, "Make sure to run the 'tc' commands to attach the program first.\n");
         return -1;
     }
 
-    err = bpf_map_update_elem(map_fd, &network_port, &value, BPF_ANY);
+    err = bpf_map_update_elem(map_fd, &network_port, &port_traffic_direction, BPF_ANY);
     if (err) {
         fprintf(stderr, "Error updating map: %s\n", strerror(errno));
         close(map_fd);
         return -1;
     }
 
-    printf("Successfully added port %d in disabled egress ports list\n", port);
+    printf("Successfully added port %d in ports list\n", port);
     close(map_fd);
     return 0;
 }
@@ -235,9 +234,9 @@ int del_port(int port) {
     int network_port = htons(port);
 
     // Find the map
-    map_fd = find_map_fd("disabled_egress");
+    map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
-        fprintf(stderr, "Could not find disabled_egress map. Is the program loaded and attached?\n");
+        fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
         return -1;
     }
 
@@ -333,9 +332,9 @@ int list_ports() {
     int count = 0;
 
     // Find the map
-    map_fd = find_map_fd("disabled_egress");
+    map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
-        fprintf(stderr, "Could not find disabled_egress map. Is the program loaded and attached?\n");
+        fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
         return -1;
     }
 
@@ -415,10 +414,11 @@ int main(int argc, char **argv) {
     char *ip_addr = NULL;
     char *command = NULL;
     int port_specified = 0;
+    int port_traffic_direction = 0;
     int opt;
 
     // Parse command line options
-    while ((opt = getopt(argc, argv, "i:p:a:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "i:p:a:v:d:h")) != -1) {
         switch (opt) {
             case 'i':
                 strncpy(cfg.interface, optarg, IFNAMSIZ - 1);
@@ -431,6 +431,9 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "Error: Port must be between 1 and 65535\n");
                     return 1;
                 }
+                break;
+            case 'd':
+                port_traffic_direction = atoi(optarg);
                 break;
             case 'a':
                 ip_addr = optarg;
@@ -483,15 +486,19 @@ int main(int argc, char **argv) {
     } else if (strcmp(command, "list-ports") == 0)
     {
         return list_ports();
-    } else if (strcmp(command,"disable-port") == 0){
+    } else if (strcmp(command,"add-port") == 0){
         if (!port_specified) {
-            fprintf(stderr, "Error: Port number required for add-ip command (-p option)\n");
+            fprintf(stderr, "Error: Port number required for add-port command (-d option)\n");
             return 1;
         }
-        return add_port(&cfg, cfg.port);
-    } else if (strcmp(command,"enable-port") == 0){
+        if (!port_traffic_direction) {
+            fprintf(stderr, "Error: Port direction required for add-port command (-d option)\n");
+            return 1;
+        }
+        return add_port(&cfg, cfg.port, port_traffic_direction);
+    } else if (strcmp(command,"del-port") == 0){
         if (!port_specified) {
-            fprintf(stderr, "Error: Port number required for add-ip command (-p option)\n");
+            fprintf(stderr, "Error: Port number required for del-port command (-p option)\n");
             return 1;
         }
         return del_port(cfg.port);
