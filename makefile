@@ -64,8 +64,8 @@ remove_maps:
 		exit 1; \
 	fi
 	@echo "Removing Pinned Maps"
-	-rm -f /sys/fs/bpf/allowed_ips
-	-rm -f /sys/fs/bpf/allowed_ports
+	-rm -f /sys/fs/bpf/tc/globals/allowed_ips
+	-rm -f /sys/fs/bpf/tc/globals/allowed_ports
 	@echo "Maps removed successfully"
 
 show-filters:

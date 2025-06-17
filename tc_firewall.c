@@ -9,7 +9,7 @@
 #include <bpf/bpf_endian.h>
 
 #define MAX_ALLOWED_IP_PORT_PAIRS 1024
-#define MAX_EGRESS_PORTS 1024
+#define MAX_EGRESS_PORTS 512
 
 #define EGRESS 1
 #define INGRESS 2
@@ -30,7 +30,7 @@ struct {
 } allowed_ips SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_EGRESS_PORTS);
     __type(key, __u16);
     __type(value, __u32);
@@ -66,7 +66,7 @@ static inline int is_ip_port_allowed(__u32 ip, __u16 port) {
 static inline int is_port_allowed(__u16 port, __u8 operation) {
     __u8 *allowed = bpf_map_lookup_elem(&allowed_ports, &port);
     bpf_printk("%d", allowed);
-    return allowed ? *allowed == INGRESS_AND_EGRESS ? 1 : *allowed == operation : 0;
+    return allowed ? (*allowed == INGRESS_AND_EGRESS ? 1 : *allowed == operation) : operation == EGRESS;
 }
 
 SEC("classifier/ingress")
@@ -87,18 +87,19 @@ int tc_ingress_firewall(struct __sk_buff *skb) {
         
         if ((void *)(tcp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-        if(!is_port_allowed(tcp_hdr->dest, INGRESS) && !is_ip_port_allowed(src_ip, tcp_hdr->dest)) {
+        if(is_port_allowed(tcp_hdr->dest, INGRESS))
+            return TC_ACT_OK;
+        if(!is_ip_port_allowed(src_ip, tcp_hdr->dest))
             return TC_ACT_SHOT;
-        }
     } else if (ip_hdr->protocol == IPPROTO_UDP) {
         struct udphdr *udp_hdr = (struct udphdr *)((void *)ip_hdr + (ip_hdr->ihl * 4));
         
         if ((void *)(udp_hdr + 1) > data_end)
             return TC_ACT_SHOT;
-
-        if (!is_port_allowed(udp_hdr->dest, INGRESS) && !is_ip_port_allowed(src_ip, udp_hdr->dest)) {
+        if(is_port_allowed(udp_hdr->dest, INGRESS))
+            return TC_ACT_OK;
+        if (!is_ip_port_allowed(src_ip, udp_hdr->dest)) 
             return TC_ACT_SHOT;
-        }
     } else {
         return TC_ACT_SHOT;
     }
@@ -115,7 +116,9 @@ int tc_egress_firewall(struct __sk_buff *skb) {
     if (parse_ipv4(data, data_end, &ip_hdr) < 0) {
         return TC_ACT_OK;
     }
-        
+    
+    __u16 src_port;
+    
     // Handle TCP or UDP
     if (ip_hdr->protocol == IPPROTO_TCP) {
         struct tcphdr *tcp_hdr = (struct tcphdr *)((void *)ip_hdr + (ip_hdr->ihl * 4));
@@ -126,6 +129,8 @@ int tc_egress_firewall(struct __sk_buff *skb) {
         if (!is_port_allowed(tcp_hdr->source, EGRESS)) {
             return TC_ACT_SHOT;
         }
+        src_port = tcp_hdr->source;
+
     } else if (ip_hdr->protocol == IPPROTO_UDP) {
         struct udphdr *udp_hdr = (struct udphdr *)((void *)ip_hdr + (ip_hdr->ihl * 4));
         
@@ -135,10 +140,15 @@ int tc_egress_firewall(struct __sk_buff *skb) {
         if (!is_port_allowed(udp_hdr->source, EGRESS)) {
             return TC_ACT_SHOT;
         }
+        src_port = udp_hdr->source;
+
     } else {
-        return TC_ACT_SHOT;
+        return TC_ACT_OK;
     }
-    
+
+    __u32 value = INGRESS_AND_EGRESS;
+    bpf_map_update_elem(&allowed_ports, &src_port, &value, BPF_ANY);
+
     return TC_ACT_OK;
 }
 char _license[] SEC("license") = "GPL";
