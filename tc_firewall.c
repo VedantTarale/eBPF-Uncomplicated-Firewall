@@ -1,4 +1,3 @@
-// memory usage, network throughput (iperf3), and packet processing latency. 
 #include <linux/bpf.h>
 #include <linux/pkt_cls.h>
 #include <linux/if_ether.h>
@@ -21,6 +20,11 @@ struct ip_port_key {
     __u16 port;      
 };
 
+struct event {
+    __u64 latency_ns;
+    __u8 direction;
+};
+
 // Map to store allowed IP addresses and Ports
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -37,6 +41,12 @@ struct {
     __type(value, __u32);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } allowed_ports SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 1 << 16);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} events SEC(".maps");
 
 static inline int parse_ipv4(void *data, void *data_end, struct iphdr **ip_hdr) {
     struct ethhdr *eth = data;
@@ -71,6 +81,7 @@ static inline int is_port_allowed(__u16 port, __u8 operation) {
 
 SEC("classifier/ingress")
 int tc_ingress_firewall(struct __sk_buff *skb) {
+    __u64 start = bpf_ktime_get_ns();
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     struct iphdr *ip_hdr;
@@ -103,12 +114,19 @@ int tc_ingress_firewall(struct __sk_buff *skb) {
     } else {
         return TC_ACT_SHOT;
     }
-    
+    __u64 end = bpf_ktime_get_ns();
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (e) {
+        e->latency_ns = end - start;
+        e->direction = 0;
+        bpf_ringbuf_submit(e, 0);
+    }
     return TC_ACT_OK;
 }
 
 SEC("classifier/egress")
 int tc_egress_firewall(struct __sk_buff *skb) {
+    __u64 start = bpf_ktime_get_ns();
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     struct iphdr *ip_hdr;
@@ -148,7 +166,13 @@ int tc_egress_firewall(struct __sk_buff *skb) {
 
     __u32 value = INGRESS_AND_EGRESS;
     bpf_map_update_elem(&allowed_ports, &src_port, &value, BPF_ANY);
-
+    __u64 end = bpf_ktime_get_ns();
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (e) {
+        e->latency_ns = end - start;
+        e->direction = 1;
+        bpf_ringbuf_submit(e, 0);
+    }
     return TC_ACT_OK;
 }
 char _license[] SEC("license") = "GPL";

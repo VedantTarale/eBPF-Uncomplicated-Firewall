@@ -8,14 +8,16 @@ KERNEL_SRC = tc_firewall.c
 USER_SRC = loader.c
 KERNEL_OBJ = tc_firewall.o
 USER_BIN = tc-firewall-loader
-
+READER_SRC = reader.c
+USER_RING_BUFF_BIN = ringbuf_reader
+ 
 ifndef INTERFACE
 	INTERFACE = enp2s0
 endif
 
 .PHONY: all load unload remove_maps show-filters install status clean help
 
-all: $(KERNEL_OBJ) $(USER_BIN)
+all: $(KERNEL_OBJ) $(USER_BIN) $(USER_RING_BUFF_BIN)
 $(KERNEL_OBJ): $(KERNEL_SRC)
 	@echo "Compiling eBPF kernel program..."
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
@@ -25,6 +27,11 @@ $(USER_BIN): $(USER_SRC)
 	@echo "Compiling userspace loader..."
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 	@echo "Userspace loader compiled: $@"
+
+$(USER_RING_BUFF_BIN): $(READER_SRC)
+	@echo "Compiling userspace ring buffer reader..."
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+	@echo "Userspace ring buffer reader compiled: $@"
 
 load: $(KERNEL_OBJ) $(USER_BIN)
 	@if [ "$$(id -u)" != "0" ]; then \
@@ -66,6 +73,7 @@ remove_maps:
 	@echo "Removing Pinned Maps"
 	-rm -f /sys/fs/bpf/tc/globals/allowed_ips
 	-rm -f /sys/fs/bpf/tc/globals/allowed_ports
+	-rm -f /sys/fs/bpf/tc/globals/events
 	@echo "Maps removed successfully"
 
 show-filters:
@@ -82,7 +90,7 @@ status: $(USER_BIN)
 
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(KERNEL_OBJ) $(USER_BIN)
+	rm -f $(KERNEL_OBJ) $(USER_BIN) $(USER_RING_BUFF_BIN)
 	@echo "Clean complete"
 
 help:
