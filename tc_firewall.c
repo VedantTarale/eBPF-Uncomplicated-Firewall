@@ -1,3 +1,4 @@
+// memory usage, network throughput (iperf3), and packet processing latency. 
 #include <linux/bpf.h>
 #include <linux/pkt_cls.h>
 #include <linux/if_ether.h>
@@ -20,7 +21,7 @@ struct ip_port_key {
     __u16 port;      
 };
 
-// Map to store allowed IP addresses
+// Map to store allowed IP addresses and Ports
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, MAX_ALLOWED_IP_PORT_PAIRS);
@@ -65,8 +66,7 @@ static inline int is_ip_port_allowed(__u32 ip, __u16 port) {
 
 static inline int is_port_allowed(__u16 port, __u8 operation) {
     __u8 *allowed = bpf_map_lookup_elem(&allowed_ports, &port);
-    bpf_printk("%d", allowed);
-    return allowed ? (*allowed == INGRESS_AND_EGRESS ? 1 : *allowed == operation) : operation == EGRESS;
+    return allowed ? (*allowed == INGRESS_AND_EGRESS || *allowed == operation) : operation == EGRESS;
 }
 
 SEC("classifier/ingress")

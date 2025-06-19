@@ -10,7 +10,7 @@ KERNEL_OBJ = tc_firewall.o
 USER_BIN = tc-firewall-loader
 
 ifndef INTERFACE
-	INTERFACE = wlan0
+	INTERFACE = enp2s0
 endif
 
 .PHONY: all load unload remove_maps show-filters install status clean help
@@ -44,7 +44,7 @@ load: $(KERNEL_OBJ) $(USER_BIN)
 	@echo "Firewall loaded successfully on $(INTERFACE)"
 
 	@echo "Adding default allowed IPs and egress ports..."
-	sudo ./$(USER_BIN) -a 192.168.2.217 -p 80 add-ip
+	sudo ./$(USER_BIN) -a 192.168.1.1 -p 80 add-ip
 	sudo ./$(USER_BIN) -p 80 -d 3 add-port
 	sudo ./$(USER_BIN) -p 443 -d 3 add-port
 	@echo "Default IPs and Egress Ports added"
@@ -98,7 +98,6 @@ help:
 	@echo "  load         - Load firewall only (requires root)"
 	@echo "  unload       - Unload firewall (requires root)"
 	@echo "  remove_maps  - Remove pinned maps (requires root)"
-	@echo "  setup-ips    - Add default allowed IPs (requires root)"
 	@echo ""
 	@echo "Management targets:"
 	@echo "  status       - Show firewall status"

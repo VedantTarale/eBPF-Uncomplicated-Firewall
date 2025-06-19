@@ -13,12 +13,13 @@
 #include <linux/if.h>
 
 #define PROGRAM_PATH "tc_firewall.o"
-#define DEFAULT_INTERFACE "wlan0"
+#define DEFAULT_INTERFACE "enp2s0"
 
 
 struct ip_port_key {
     uint32_t ip;    
-    uint16_t port; 
+    uint16_t port;
+    uint32_t value;
 };
 
 struct config {
@@ -29,7 +30,6 @@ struct config {
     int verbose;
 };
 
-// Function to print usage
 void print_usage(const char *prog_name) {
     printf("Usage: %s [OPTIONS] COMMAND\n", prog_name);
     printf("\nCommands:\n");
@@ -38,33 +38,32 @@ void print_usage(const char *prog_name) {
     printf("  status   Show firewall status\n");
     printf("  add-ip   Add an IP:port combination to allowed list\n");
     printf("  del-ip   Remove an IP:port combination from allowed list\n");
-    printf("  disable-port Disable Egress on the port\n");
-    printf("  enable-port  Enable Egress on the port\n");
+    printf("  add-port Disable Egress on the port\n");
+    printf("  del-port  Enable Egress on the port\n");
     printf("  list-ips List allowed IP:port combinations\n");
     printf("\nOptions:\n");
     printf("  -i IFACE    Network interface (default: %s)\n", DEFAULT_INTERFACE);
     printf("  -p PORT     Port number (required for add-ip/del-ip commands)\n");
     printf("  -a IP       IP address (required for add-ip/del-ip commands)\n");
     printf("  -v          Verbose output\n");
+    printf("  -d DIRECTION  Port traffic direction (1 for Egress, 2 for Ingress, 3 for both) (required for add-port command)\n");
     printf("  -h          Show this help\n");
     printf("\nExamples:\n");
-    printf("  %s -i wlan0 load\n", prog_name);
+    printf("  %s -i enp2s0 load\n", prog_name);
     printf("  %s -a 192.168.1.10 -p 8080 add-ip\n", prog_name);
     printf("  %s -a 192.168.1.10 -p 8080 del-ip\n", prog_name);
     printf("  %s status\n", prog_name);
 }
 
-// Function to convert IP string to network byte order
 int ip_to_int(const char *ip_str, uint32_t *ip_int) {
     struct in_addr addr;
     if (inet_aton(ip_str, &addr) == 0) {
         return -1;
     }
-    *ip_int = addr.s_addr;  // Already in network byte order
+    *ip_int = addr.s_addr;
     return 0;
 }
 
-// Function to convert network byte order to IP string
 void int_to_ip(uint32_t ip_int, char *ip_str) {
     struct in_addr addr;
     addr.s_addr = ip_int;
@@ -109,7 +108,7 @@ int find_map_fd(const char *map_name) {
 // Function to add IP:port combination to allowed list
 int add_ip(struct config *cfg, const char *ip_str, int port) {
     int map_fd;
-    uint32_t value = 1;  // Changed from uint8_t to uint32_t to match BPF program
+    uint32_t value = 1;
     int err;
     struct ip_port_key key = {0};
 
@@ -123,7 +122,6 @@ int add_ip(struct config *cfg, const char *ip_str, int port) {
         return -1;
     }
     
-    // Set port in network byte order (matching BPF program expectation)
     key.port = htons(port);
     
     if (cfg->verbose) {
@@ -131,7 +129,6 @@ int add_ip(struct config *cfg, const char *ip_str, int port) {
                ntohl(key.ip), ntohs(key.port), key.port);
     }
     
-    // Find the map
     map_fd = find_map_fd("allowed_ips");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ips map. Is the program loaded and attached?\n");
@@ -139,7 +136,6 @@ int add_ip(struct config *cfg, const char *ip_str, int port) {
         return -1;
     }
 
-    // Update the map
     err = bpf_map_update_elem(map_fd, &key, &value, BPF_ANY);
     if (err) {
         fprintf(stderr, "Error updating map: %s\n", strerror(errno));
@@ -162,7 +158,6 @@ int add_port(struct config *cfg, int port, int port_traffic_direction){
     
     int network_port = htons(port);
 
-    // Find the map
     map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
@@ -182,7 +177,6 @@ int add_port(struct config *cfg, int port, int port_traffic_direction){
     return 0;
 }
 
-// Function to remove IP:port combination from allowed list
 int del_ip(struct config *cfg, const char *ip_str, int port) {
     int map_fd;
     struct ip_port_key key = {0};
@@ -192,23 +186,19 @@ int del_ip(struct config *cfg, const char *ip_str, int port) {
         printf("Removing IP:port %s:%d from allowed list\n", ip_str, port);
     }
 
-    // Convert IP string to network byte order
     if (ip_to_int(ip_str, &key.ip) < 0) {
         fprintf(stderr, "Invalid IP address: %s\n", ip_str);
         return -1;
     }
     
-    // Set port in network byte order
     key.port = htons(port);
 
-    // Find the map
     map_fd = find_map_fd("allowed_ips");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ips map. Is the program loaded and attached?\n");
         return -1;
     }
 
-    // Delete from the map
     err = bpf_map_delete_elem(map_fd, &key);
     if (err) {
         if (errno == ENOENT) {
@@ -230,17 +220,14 @@ int del_port(int port) {
     int err;
 
     
-    // Set port in network byte order
     int network_port = htons(port);
 
-    // Find the map
     map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
         return -1;
     }
 
-    // Delete from the map
     err = bpf_map_delete_elem(map_fd, &network_port);
     if (err) {
         if (errno == ENOENT) {
@@ -257,16 +244,14 @@ int del_port(int port) {
     return 0;
 }
 
-// Function to list allowed IP:port combinations
 int list_ips() {
     int map_fd;
     struct ip_port_key key, next_key;
-    uint32_t value;  // Changed from uint8_t to uint32_t
+    uint32_t value;
     char ip_str[INET_ADDRSTRLEN];
     int err;
     int count = 0;
 
-    // Find the map
     map_fd = find_map_fd("allowed_ips");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ips map. Is the program loaded and attached?\n");
@@ -279,7 +264,6 @@ int list_ips() {
     // Initialize key for iteration
     memset(&key, 0, sizeof(key));
     
-    // Try to get first key
     err = bpf_map_get_next_key(map_fd, NULL, &key);
     if (err) {
         if (errno == ENOENT) {
@@ -293,7 +277,6 @@ int list_ips() {
         }
     }
 
-    // Process first entry
     err = bpf_map_lookup_elem(map_fd, &key, &value);
     if (err == 0) {
         int_to_ip(key.ip, ip_str);
@@ -301,7 +284,6 @@ int list_ips() {
         count++;
     }
     
-    // Iterate through remaining entries
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
         err = bpf_map_lookup_elem(map_fd, &next_key, &value);
         if (err == 0) {
@@ -322,23 +304,21 @@ int list_ips() {
     return 0;
 }
 
-// Function to list allowed egress ports
 int list_ports() {
     int map_fd;
     struct ip_port_key key, next_key;
-    uint32_t value;  // Changed from uint8_t to uint32_t
+    uint32_t value;
     char ip_str[INET_ADDRSTRLEN];
     int err;
     int count = 0;
 
-    // Find the map
     map_fd = find_map_fd("allowed_ports");
     if (map_fd < 0) {
         fprintf(stderr, "Could not find allowed_ports map. Is the program loaded and attached?\n");
         return -1;
     }
 
-    printf("Blocked egress ports:\n");
+    printf("Egress ports:\n");
     printf("=============================\n");
 
     // Initialize key for iteration
@@ -358,7 +338,6 @@ int list_ports() {
         }
     }
 
-    // Process first entry
     err = bpf_map_lookup_elem(map_fd, &key, &value);
     if (err == 0) {
         int_to_ip(key.ip, ip_str);
@@ -366,12 +345,11 @@ int list_ports() {
         count++;
     }
     
-    // Iterate through remaining entries
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
         err = bpf_map_lookup_elem(map_fd, &next_key, &value);
         if (err == 0) {
             int_to_ip(next_key.ip, ip_str);
-            printf("  %s:%d\n", ip_str, ntohs(next_key.port));
+            printf("  %s:%d, state: %d\n", ip_str, ntohs(next_key.port), next_key.value);
             count++;
         }
         key = next_key;
@@ -387,7 +365,6 @@ int list_ports() {
     return 0;
 }
 
-// Function to show status
 int show_status(struct config *cfg) {
     printf("TC eBPF Firewall Status\n");
     printf("=======================\n");
@@ -407,7 +384,6 @@ int main(int argc, char **argv) {
         .verbose = 0
     };
     
-    // Set default interface
     strncpy(cfg.interface, DEFAULT_INTERFACE, IFNAMSIZ - 1);
     cfg.interface[IFNAMSIZ - 1] = '\0';
     
@@ -417,7 +393,6 @@ int main(int argc, char **argv) {
     int port_traffic_direction = 0;
     int opt;
 
-    // Parse command line options
     while ((opt = getopt(argc, argv, "i:p:a:v:d:h")) != -1) {
         switch (opt) {
             case 'i':
@@ -450,7 +425,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Get command
     if (optind >= argc) {
         fprintf(stderr, "Error: No command specified\n");
         print_usage(argv[0]);
@@ -458,7 +432,6 @@ int main(int argc, char **argv) {
     }
     command = argv[optind];
 
-    // Execute command
     if (strcmp(command, "status") == 0) {
         return show_status(&cfg);
     } else if (strcmp(command, "add-ip") == 0) {
