@@ -214,3 +214,53 @@ A utility to manage an eBPF-based firewall with IP and port control features.
 # Show firewall status
 ./tc-firewall-loader status
 ```
+
+
+## Benchmark Results
+### Testing Conditions
+
+- **Client**: Raspberry Pi 5 running OpenWRT
+- **Server**: Host machine running `iperf3 -s -V`
+- **Connection**: Direct Ethernet link from Raspberry Pi to host (`enp2s0`)
+- **Execution**: SSH into the router and run:
+
+```bash
+iperf3 -c <host_ip> -t 60 -i 1 -f k -V --logfile <logfile>
+```
+- **Perf**: Host also monitors the cpu cycles consumed by the ebpf egress using `perf`
+
+```bash
+sudo perf record -e cpu-cycles -a -g -- sleep 60
+sudo perf report
+```
+
+### Without Firewall
+
+- **Transfer**: 6.54 GBytes  
+- **Bitrate**: 936.76 Mbit/sec  
+- **Retransmissions**: 0  
+- **CPU Usage**:  
+  - Sender: 1.5%  
+  - Receiver: 12.5%
+
+### With Firewall
+
+- **Transfer**: 6.34 GBytes  
+- **Bitrate**: 907.47 Mbit/sec  
+- **Retransmissions**: 505  
+- **CPU Usage**:  
+  - Sender: 1.3%  
+  - Receiver: 13.9%
+
+### perf Results
+
+- **CPU Utilization(Self Cycles)**: 0.03%  
+- **Approx. Event Count**: 93,001,846,426
+
+### Average Packet Processing Latency
+- **Average in nanoseconds**: 1281.590457
+---
+
+The firewall introduces minimal performance overhead while providing strong ingress/egress control.
+
+---
